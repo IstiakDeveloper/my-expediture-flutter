@@ -139,31 +139,54 @@ class DatabaseHelper {
     return await db.query('payment_methods');
   }
 
-  Future<void> updatePaymentMethodBalance(String methodId, double amount, String type) async {
+  Future<void> updatePaymentMethodBalance(
+      String methodId, double amount, String type) async {
     Database db = await database;
-    double currentBalance = 0.0;
-    
-    var result = await db.query(
-      'payment_methods',
-      columns: ['balance'],
-      where: 'id = ?',
-      whereArgs: [methodId],
-    );
-    
-    if (result.isNotEmpty) {
-      currentBalance = result.first['balance'] as double;
+
+    try {
+      print('Updating payment method balance separately...');
+      print('Method ID: $methodId');
+      print('Amount: $amount');
+      print('Type: $type');
+
+      // Get current balance
+      final List<Map<String, dynamic>> result = await db.query(
+        'payment_methods',
+        columns: ['balance'],
+        where: 'id = ?',
+        whereArgs: [methodId],
+      );
+
+      if (result.isEmpty) {
+        throw Exception('Payment method not found');
+      }
+
+      double currentBalance = result.first['balance'] as double;
+      print('Current balance: $currentBalance');
+
+      double newBalance =
+          type == 'income' ? currentBalance + amount : currentBalance - amount;
+
+      print('New balance: $newBalance');
+
+      // Update balance
+      int updateResult = await db.update(
+        'payment_methods',
+        {'balance': newBalance},
+        where: 'id = ?',
+        whereArgs: [methodId],
+      );
+
+      print('Update result: $updateResult');
+
+      if (updateResult != 1) {
+        throw Exception('Failed to update payment method balance');
+      }
+    } catch (e, stackTrace) {
+      print('Error updating balance: $e');
+      print('Stack trace: $stackTrace');
+      throw Exception('Failed to update balance: $e');
     }
-    
-    double newBalance = type == 'income' 
-        ? currentBalance + amount 
-        : currentBalance - amount;
-    
-    await db.update(
-      'payment_methods',
-      {'balance': newBalance},
-      where: 'id = ?',
-      whereArgs: [methodId],
-    );
   }
 
   // Categories Methods
@@ -172,7 +195,6 @@ class DatabaseHelper {
     return await db.query('categories');
   }
 
-  // Transaction Methods
   Future<int> insertTransaction({
     required String id,
     required String type,
@@ -182,25 +204,114 @@ class DatabaseHelper {
     String? description,
   }) async {
     Database db = await database;
-    
-    // Begin transaction
-    await db.transaction((txn) async {
-      // Insert the transaction
-      await txn.insert('transactions', {
-        'id': id,
-        'type': type,
-        'amount': amount,
-        'payment_method_id': paymentMethodId,
-        'category_id': categoryId,
-        'description': description,
-        'date': DateTime.now().toIso8601String(),
+
+    try {
+      print('Starting database transaction...');
+      print('Input Data:');
+      print('ID: $id');
+      print('Type: $type');
+      print('Amount: $amount');
+      print('Payment Method ID: $paymentMethodId');
+      print('Category ID: $categoryId');
+      print('Description: $description');
+
+      // Begin transaction
+      int result = await db.transaction((txn) async {
+        print('Inserting transaction record...');
+
+        // Create transaction map
+        final Map<String, dynamic> transactionData = {
+          'id': id,
+          'type': type,
+          'amount': amount,
+          'payment_method_id': paymentMethodId,
+          'category_id': categoryId,
+          'description': description,
+          'date': DateTime.now().toIso8601String(),
+          'created_at': DateTime.now().toIso8601String(),
+        };
+
+        print('Transaction data: $transactionData');
+
+        // Insert the transaction
+        int insertId = await txn.insert(
+          'transactions',
+          transactionData,
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+
+        print('Transaction inserted with ID: $insertId');
+
+        // Verify the transaction was inserted
+        final List<Map<String, dynamic>> check = await txn.query(
+          'transactions',
+          where: 'id = ?',
+          whereArgs: [id],
+        );
+
+        if (check.isEmpty) {
+          throw Exception('Transaction was not inserted properly');
+        }
+
+        print('Updating payment method balance...');
+        // Get current balance
+        final List<Map<String, dynamic>> currentBalance = await txn.query(
+          'payment_methods',
+          columns: ['balance'],
+          where: 'id = ?',
+          whereArgs: [paymentMethodId],
+        );
+
+        if (currentBalance.isEmpty) {
+          throw Exception('Payment method not found');
+        }
+
+        double balance = currentBalance.first['balance'] as double;
+        double newBalance =
+            type == 'income' ? balance + amount : balance - amount;
+
+        print('Old balance: $balance');
+        print('New balance: $newBalance');
+
+        // Update payment method balance
+        int updateResult = await txn.update(
+          'payment_methods',
+          {'balance': newBalance},
+          where: 'id = ?',
+          whereArgs: [paymentMethodId],
+        );
+
+        print('Balance update result: $updateResult');
+
+        if (updateResult != 1) {
+          throw Exception('Failed to update payment method balance');
+        }
+
+        return insertId;
       });
-      
-      // Update payment method balance
-      await updatePaymentMethodBalance(paymentMethodId, amount, type);
-    });
-    
-    return 1;
+
+      print('Transaction completed successfully with result: $result');
+      return result;
+    } catch (e, stackTrace) {
+      print('Database error: $e');
+      print('Stack trace: $stackTrace');
+      throw Exception('Failed to insert transaction: $e');
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> getIncomeTransactions() async {
+    Database db = await database;
+    return await db.rawQuery('''
+    SELECT 
+      t.*,
+      c.name as category_name,
+      pm.name as payment_method_name
+    FROM transactions t
+    LEFT JOIN categories c ON t.category_id = c.id
+    LEFT JOIN payment_methods pm ON t.payment_method_id = pm.id
+    WHERE t.type = 'income'
+    ORDER BY t.date DESC
+  ''');
   }
 
   Future<List<Map<String, dynamic>>> getAllTransactions() async {
@@ -217,7 +328,8 @@ class DatabaseHelper {
     ''');
   }
 
-  Future<List<Map<String, dynamic>>> getRecentTransactions({int limit = 5}) async {
+  Future<List<Map<String, dynamic>>> getRecentTransactions(
+      {int limit = 5}) async {
     Database db = await database;
     return await db.rawQuery('''
       SELECT 
@@ -234,16 +346,16 @@ class DatabaseHelper {
 
   Future<int> deleteTransaction(String id) async {
     Database db = await database;
-    
+
     // Get transaction details first
     final transaction = await db.query(
       'transactions',
       where: 'id = ?',
       whereArgs: [id],
     );
-    
+
     if (transaction.isEmpty) return 0;
-    
+
     // Start a transaction to update both tables
     await db.transaction((txn) async {
       // Delete the transaction
@@ -252,13 +364,13 @@ class DatabaseHelper {
         where: 'id = ?',
         whereArgs: [id],
       );
-      
+
       // Reverse the balance update
       final transactionData = transaction.first;
       final amount = transactionData['amount'] as double;
       final type = transactionData['type'] as String;
       final paymentMethodId = transactionData['payment_method_id'] as String;
-      
+
       // Reverse the effect on payment method balance
       await updatePaymentMethodBalance(
         paymentMethodId,
@@ -266,19 +378,19 @@ class DatabaseHelper {
         type == 'income' ? 'expense' : 'income',
       );
     });
-    
+
     return 1;
   }
 
   Future<Map<String, double>> getAllBalances() async {
     Database db = await database;
     var results = await db.query('payment_methods');
-    
+
     Map<String, double> balances = {};
     for (var row in results) {
       balances[row['name'] as String] = row['balance'] as double;
     }
-    
+
     return balances;
   }
 
@@ -293,7 +405,7 @@ class DatabaseHelper {
     DateTime? dueDate,
   }) async {
     Database db = await database;
-    
+
     return await db.insert('loans', {
       'id': id,
       'person_name': personName,
@@ -315,7 +427,7 @@ class DatabaseHelper {
     String? description,
   }) async {
     Database db = await database;
-    
+
     return await db.insert('loan_payments', {
       'id': id,
       'loan_id': loanId,
@@ -341,6 +453,49 @@ class DatabaseHelper {
       GROUP BY l.id
       ORDER BY l.created_at DESC
     ''');
+  }
+
+  Future<bool> verifyTransaction(String id) async {
+    Database db = await database;
+    final List<Map<String, dynamic>> result = await db.query(
+      'transactions',
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+    return result.isNotEmpty;
+  }
+
+  Future<List<Map<String, dynamic>>> getExpenseTransactions() async {
+    Database db = await database;
+    return await db.rawQuery('''
+    SELECT 
+      t.*,
+      c.name as category_name,
+      pm.name as payment_method_name
+    FROM transactions t
+    LEFT JOIN categories c ON t.category_id = c.id
+    LEFT JOIN payment_methods pm ON t.payment_method_id = pm.id
+    WHERE t.type = 'expense'
+    ORDER BY t.date DESC
+  ''');
+  }
+
+  Future<void> debugPrintDatabaseState() async {
+    Database db = await database;
+
+    print('\n--- Current Database State ---');
+
+    // Print all transactions
+    print('\nTransactions:');
+    final transactions = await db.query('transactions');
+    transactions.forEach((t) => print(t));
+
+    // Print all payment methods with balances
+    print('\nPayment Methods:');
+    final paymentMethods = await db.query('payment_methods');
+    paymentMethods.forEach((pm) => print(pm));
+
+    print('\n---------------------------\n');
   }
 
   Future<double> getTotalBalance() async {

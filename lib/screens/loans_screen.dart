@@ -187,7 +187,7 @@ class _LoansScreenState extends State<LoansScreen> {
                 children: [
                   const Text('Remaining:'),
                   Text(
-                    '₹${_currencyFormat.format(remainingAmount)}',
+                    '৳${_currencyFormat.format(remainingAmount)}',
                     style: const TextStyle(
                       fontWeight: FontWeight.bold,
                     ),
@@ -307,7 +307,7 @@ class _LoansScreenState extends State<LoansScreen> {
                             ),
                             const SizedBox(height: 8),
                             Text(
-                              '₹${_currencyFormat.format(_totalGiven)}',
+                              '৳${_currencyFormat.format(_totalGiven)}',
                               style: const TextStyle(
                                 fontSize: 18,
                                 fontWeight: FontWeight.bold,
@@ -349,7 +349,7 @@ class _LoansScreenState extends State<LoansScreen> {
                             ),
                             const SizedBox(height: 8),
                             Text(
-                              '₹${_currencyFormat.format(_totalTaken)}',
+                              '৳${_currencyFormat.format(_totalTaken)}',
                               style: const TextStyle(
                                 fontSize: 18,
                                 fontWeight: FontWeight.bold,
@@ -560,7 +560,7 @@ class _LoansScreenState extends State<LoansScreen> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                '₹${_currencyFormat.format(remainingAmount)} remaining',
+                                '৳${_currencyFormat.format(remainingAmount)} remaining',
                                 style: TextStyle(
                                   color: isGiven ? Colors.green : Colors.red,
                                   fontWeight: FontWeight.bold,
@@ -593,11 +593,11 @@ class _LoansScreenState extends State<LoansScreen> {
                                 children: [
                                   _buildLoanDetail(
                                     'Total Amount',
-                                    '₹${_currencyFormat.format(amount)}',
+                                    '৳${_currencyFormat.format(amount)}',
                                   ),
                                   _buildLoanDetail(
                                     'Paid Amount',
-                                    '₹${_currencyFormat.format(paidAmount)}',
+                                    '৳${_currencyFormat.format(paidAmount)}',
                                   ),
                                   _buildLoanDetail(
                                     'Date',

@@ -13,6 +13,7 @@ class TransactionsScreen extends StatefulWidget {
 }
 
 class _TransactionsScreenState extends State<TransactionsScreen> {
+  bool _isLoading = false;
   final DatabaseHelper _dbHelper = DatabaseHelper();
   final _amountController = TextEditingController();
   final _descriptionController = TextEditingController();
@@ -38,12 +39,12 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
     final categories = await _dbHelper.getAllCategories();
     final paymentMethods = await _dbHelper.getAllPaymentMethods();
     final transactions = await _dbHelper.getAllTransactions();
-    
+
     setState(() {
       _categories = categories;
       _paymentMethods = paymentMethods;
       _transactions = transactions;
-      
+
       if (_selectedPaymentMethodId == null && paymentMethods.isNotEmpty) {
         _selectedPaymentMethodId = paymentMethods.first['id'].toString();
       }
@@ -51,38 +52,140 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
   }
 
   Future<void> _addTransaction() async {
-    if (_amountController.text.isEmpty || _selectedPaymentMethodId == null) {
+    // Form validation
+    if (_amountController.text.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please fill in all required fields')),
+        const SnackBar(
+          content: Text('Please enter an amount'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    // Validate amount is a number and greater than 0
+    final amount = double.tryParse(_amountController.text);
+    if (amount == null || amount <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please enter a valid amount greater than 0'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    // Validate payment method is selected
+    if (_selectedPaymentMethodId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please select a payment method'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    // Category validation for expense transactions
+    if (_selectedType == 'expense' && _selectedCategoryId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please select a category for expense'),
+          backgroundColor: Colors.red,
+        ),
       );
       return;
     }
 
     try {
-      final amount = double.parse(_amountController.text);
-      await _dbHelper.insertTransaction(
+      // Show loading indicator
+      setState(() {
+        _isLoading = true;
+      });
+
+      print('Adding transaction with following details:');
+      print('Amount: $amount');
+      print('Type: $_selectedType');
+      print('Payment Method: $_selectedPaymentMethodId');
+      print('Category: $_selectedCategoryId');
+      print('Description: ${_descriptionController.text}');
+
+      // Insert transaction
+      final result = await _dbHelper.insertTransaction(
         id: _uuid.v4(),
         type: _selectedType,
         amount: amount,
         paymentMethodId: _selectedPaymentMethodId!,
         categoryId: _selectedCategoryId,
-        description: _descriptionController.text,
+        description: _descriptionController.text.trim(),
       );
 
+      print('Transaction insert result: $result');
+
+      // Clear form
       _amountController.clear();
       _descriptionController.clear();
-      setState(() => _showForm = false);
+      setState(() {
+        _showForm = false;
+        _selectedCategoryId = null;
+      });
+
+      // Reload data
       await _loadData();
 
       if (mounted) {
+        // Show success message
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Transaction added successfully')),
+          SnackBar(
+            content: Row(
+              children: [
+                Icon(
+                  Icons.check_circle,
+                  color: Colors.white,
+                ),
+                SizedBox(width: 8),
+                Text('Transaction added successfully'),
+              ],
+            ),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 2),
+          ),
         );
       }
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error: $e')),
-      );
+    } catch (e, stackTrace) {
+      print('Error adding transaction: $e');
+      print('Stack trace: $stackTrace');
+
+      if (mounted) {
+        // Show error message
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                Icon(
+                  Icons.error,
+                  color: Colors.white,
+                ),
+                SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Error adding transaction: ${e.toString()}',
+                    maxLines: 2,
+                  ),
+                ),
+              ],
+            ),
+            backgroundColor: Colors.red,
+            duration: Duration(seconds: 4),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
     }
   }
 
@@ -101,7 +204,7 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
       (cat) => cat['id'].toString() == categoryId,
       orElse: () => {'icon': 'default'},
     );
-    
+
     switch (category['icon']) {
       case 'money':
         return Icons.attach_money;
@@ -230,9 +333,11 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
                     // Amount
                     TextField(
                       controller: _amountController,
-                      keyboardType: TextInputType.numberWithOptions(decimal: true),
+                      keyboardType:
+                          TextInputType.numberWithOptions(decimal: true),
                       inputFormatters: [
-                        FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d{0,2}')),
+                        FilteringTextInputFormatter.allow(
+                            RegExp(r'^\d*\.?\d{0,2}')),
                       ],
                       decoration: InputDecoration(
                         labelText: 'Amount',
@@ -240,7 +345,15 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
                           borderRadius: BorderRadius.circular(12),
                         ),
                         prefixIcon: const Icon(Icons.money),
+                        errorText: _amountController.text.isNotEmpty &&
+                                double.tryParse(_amountController.text) == null
+                            ? 'Please enter a valid amount'
+                            : null,
                       ),
+                      onChanged: (value) {
+                        // Force rebuild to show/hide error text
+                        setState(() {});
+                      },
                     ),
                     const SizedBox(height: 16),
 
@@ -315,7 +428,7 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
                       final isIncome = transaction['type'] == 'income';
                       final amount = transaction['amount'] as double;
                       final date = DateTime.parse(transaction['date']);
-                      
+
                       return Card(
                         margin: const EdgeInsets.symmetric(
                           horizontal: 16,
@@ -337,7 +450,7 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
                           title: Row(
                             children: [
                               Text(
-                                '₹${_currencyFormat.format(amount)}',
+                                '৳${_currencyFormat.format(amount)}',
                                 style: TextStyle(
                                   color: isIncome ? Colors.green : Colors.red,
                                   fontWeight: FontWeight.bold,
@@ -359,7 +472,8 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
                                   fontWeight: FontWeight.w500,
                                 ),
                               ),
-                              if (transaction['description']?.isNotEmpty ?? false)
+                              if (transaction['description']?.isNotEmpty ??
+                                  false)
                                 Text(
                                   transaction['description'],
                                   style: Theme.of(context).textTheme.bodySmall,
@@ -368,9 +482,10 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
                           ),
                           trailing: Text(
                             transaction['payment_method_name'] ?? 'Unknown',
-                            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                              color: Colors.grey[600],
-                            ),
+                            style:
+                                Theme.of(context).textTheme.bodySmall?.copyWith(
+                                      color: Colors.grey[600],
+                                    ),
                           ),
                         ),
                       );

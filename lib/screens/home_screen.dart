@@ -1,6 +1,8 @@
+// lib/screens/home_screen.dart
+
 import 'package:flutter/material.dart';
-import '../data/datasources/local/database_helper.dart';
 import 'package:intl/intl.dart';
+import '../data/datasources/local/database_helper.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -11,26 +13,333 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   final DatabaseHelper _dbHelper = DatabaseHelper();
-  Map<String, double> _balances = {};
+  final _currencyFormat = NumberFormat("#,##0.00", "en_US");
+
+  bool _isLoading = false;
   double _totalBalance = 0.0;
-  final currencyFormat = NumberFormat("#,##0.00", "en_US");
+  Map<String, double> _balances = {};
+  List<Map<String, dynamic>> _recentTransactions = [];
+  double _totalIncome = 0.0;
+  double _totalExpense = 0.0;
 
   @override
   void initState() {
     super.initState();
-    _loadBalances();
+    _loadData();
   }
 
-  Future<void> _loadBalances() async {
-    final balances = await _dbHelper.getAllBalances();
-    final totalBalance = await _dbHelper.getTotalBalance();
-    setState(() {
-      _balances = balances;
-      _totalBalance = totalBalance;
-    });
+  Future<void> _loadData() async {
+    setState(() => _isLoading = true);
+    try {
+      final balances = await _dbHelper.getAllBalances();
+      final totalBalance = await _dbHelper.getTotalBalance();
+      final recentTransactions =
+          await _dbHelper.getRecentTransactions(limit: 5);
+
+      // Calculate totals
+      double incomeTotal = 0.0;
+      double expenseTotal = 0.0;
+      for (var transaction in recentTransactions) {
+        if (transaction['type'] == 'income') {
+          incomeTotal += transaction['amount'] as double;
+        } else {
+          expenseTotal += transaction['amount'] as double;
+        }
+      }
+
+      setState(() {
+        _balances = balances;
+        _totalBalance = totalBalance;
+        _recentTransactions = recentTransactions;
+        _totalIncome = incomeTotal;
+        _totalExpense = expenseTotal;
+      });
+    } catch (e) {
+      print('Error loading data: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Error loading data')),
+      );
+    } finally {
+      setState(() => _isLoading = false);
+    }
   }
 
-  IconData _getIconForMethod(String methodName) {
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Finance Manager'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: _loadData,
+          ),
+        ],
+      ),
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : RefreshIndicator(
+              onRefresh: _loadData,
+              child: SingleChildScrollView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    // Total Balance Card
+                    Card(
+                      child: Container(
+                        padding: const EdgeInsets.all(20),
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            colors: [Colors.blue[700]!, Colors.blue[500]!],
+                          ),
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        child: Column(
+                          children: [
+                            const Text(
+                              'Total Balance',
+                              style: TextStyle(
+                                color: Colors.white70,
+                                fontSize: 16,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              '৳${_currencyFormat.format(_totalBalance)}',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 32,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+
+                    // Quick Actions Row
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _buildQuickActionCard(
+                            title: 'Income',
+                            icon: Icons.arrow_upward,
+                            color: Colors.green,
+                            amount: _totalIncome,
+                            onTap: () => Navigator.pushNamed(context, '/income')
+                                .then((_) => _loadData()),
+                          ),
+                        ),
+                        const SizedBox(width: 16),
+                        Expanded(
+                          child: _buildQuickActionCard(
+                            title: 'Expense',
+                            icon: Icons.arrow_downward,
+                            color: Colors.red,
+                            amount: _totalExpense,
+                            onTap: () =>
+                                Navigator.pushNamed(context, '/expense')
+                                    .then((_) => _loadData()),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+
+                    // Payment Methods
+                    Card(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Padding(
+                            padding: EdgeInsets.all(16),
+                            child: Text(
+                              'Payment Methods',
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                          ListView.separated(
+                            shrinkWrap: true,
+                            physics: const NeverScrollableScrollPhysics(),
+                            itemCount: _balances.length,
+                            separatorBuilder: (_, __) =>
+                                const Divider(height: 1),
+                            itemBuilder: (context, index) {
+                              final methodName =
+                                  _balances.keys.elementAt(index);
+                              final balance = _balances[methodName] ?? 0.0;
+                              return ListTile(
+                                leading: Icon(
+                                  _getPaymentMethodIcon(methodName),
+                                  color: _getPaymentMethodColor(methodName),
+                                ),
+                                title: Text(methodName),
+                                trailing: Text(
+                                  '৳${_currencyFormat.format(balance)}',
+                                  style: TextStyle(
+                                    color: balance >= 0
+                                        ? Colors.green
+                                        : Colors.red,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+
+                    // Recent Transactions
+                    Card(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Padding(
+                            padding: const EdgeInsets.all(16),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                const Text(
+                                  'Recent Transactions',
+                                  style: TextStyle(
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                TextButton(
+                                  onPressed: () => Navigator.pushNamed(
+                                    context,
+                                    '/transactions',
+                                  ).then((_) => _loadData()),
+                                  child: const Text('See All'),
+                                ),
+                              ],
+                            ),
+                          ),
+                          if (_recentTransactions.isEmpty)
+                            const Padding(
+                              padding: EdgeInsets.all(16),
+                              child: Center(
+                                child: Text('No recent transactions'),
+                              ),
+                            )
+                          else
+                            ListView.separated(
+                              shrinkWrap: true,
+                              physics: const NeverScrollableScrollPhysics(),
+                              itemCount: _recentTransactions.length,
+                              separatorBuilder: (_, __) =>
+                                  const Divider(height: 1),
+                              itemBuilder: (context, index) {
+                                final transaction = _recentTransactions[index];
+                                final isIncome =
+                                    transaction['type'] == 'income';
+                                final amount = transaction['amount'] as double;
+                                final date =
+                                    DateTime.parse(transaction['date']);
+
+                                return ListTile(
+                                  leading: CircleAvatar(
+                                    backgroundColor: isIncome
+                                        ? Colors.green[50]
+                                        : Colors.red[50],
+                                    child: Icon(
+                                      isIncome
+                                          ? Icons.arrow_upward
+                                          : Icons.arrow_downward,
+                                      color:
+                                          isIncome ? Colors.green : Colors.red,
+                                    ),
+                                  ),
+                                  title: Text(
+                                    '৳${_currencyFormat.format(amount)}',
+                                    style: TextStyle(
+                                      color:
+                                          isIncome ? Colors.green : Colors.red,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                  subtitle: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        transaction['category_name'] ??
+                                            'No Category',
+                                      ),
+                                      Text(
+                                        DateFormat('MMM dd, yyyy').format(date),
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .bodySmall,
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              },
+                            ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: () =>
+            Navigator.pushNamed(context, '/loans').then((_) => _loadData()),
+        child: const Icon(Icons.money),
+      ),
+    );
+  }
+
+  Widget _buildQuickActionCard({
+    required String title,
+    required IconData icon,
+    required Color color,
+    required double amount,
+    required VoidCallback onTap,
+  }) {
+    return Card(
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            children: [
+              Icon(icon, color: color, size: 32),
+              const SizedBox(height: 8),
+              Text(
+                title,
+                style: TextStyle(
+                  color: color,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                '৳${_currencyFormat.format(amount)}',
+                style: TextStyle(
+                  color: color.withOpacity(0.8),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  IconData _getPaymentMethodIcon(String methodName) {
     switch (methodName.toLowerCase()) {
       case 'cash':
         return Icons.money;
@@ -45,7 +354,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  Color _getColorForMethod(String methodName) {
+  Color _getPaymentMethodColor(String methodName) {
     switch (methodName.toLowerCase()) {
       case 'cash':
         return Colors.green;
@@ -60,307 +369,5 @@ class _HomeScreenState extends State<HomeScreen> {
       default:
         return Colors.blueGrey;
     }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.grey[100],
-      appBar: AppBar(
-        elevation: 0,
-        backgroundColor: Colors.transparent,
-        title: const Text(
-          'Finance Overview',
-          style: TextStyle(
-            color: Colors.black87,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh, color: Colors.black87),
-            onPressed: _loadBalances,
-          ),
-        ],
-      ),
-      body: RefreshIndicator(
-        onRefresh: _loadBalances,
-        child: SingleChildScrollView(
-          physics: const AlwaysScrollableScrollPhysics(),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // Total Balance Card
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: Card(
-                  elevation: 8,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: Container(
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(20),
-                      gradient: const LinearGradient(
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                        colors: [
-                          Color(0xFF1A237E),
-                          Color(0xFF3949AB),
-                        ],
-                      ),
-                    ),
-                    padding: const EdgeInsets.all(24.0),
-                    child: Column(
-                      children: [
-                        const Text(
-                          'Total Balance',
-                          style: TextStyle(
-                            color: Colors.white70,
-                            fontSize: 16,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          '₹${currencyFormat.format(_totalBalance)}',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 32,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        const SizedBox(height: 24),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceAround,
-                          children: [
-                            _buildQuickAction(
-                              icon: Icons.add_circle_outline,
-                              label: 'Income',
-                              color: Colors.green[300]!,
-                              onTap: () {
-                                Navigator.pushNamed(
-                                  context,
-                                  '/transactions',
-                                  arguments: 'income',
-                                ).then((_) => _loadBalances());
-                              },
-                            ),
-                            _buildQuickAction(
-                              icon: Icons.remove_circle_outline,
-                              label: 'Expense',
-                              color: Colors.red[300]!,
-                              onTap: () {
-                                Navigator.pushNamed(
-                                  context,
-                                  '/transactions',
-                                  arguments: 'expense',
-                                ).then((_) => _loadBalances());
-                              },
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-
-              // Payment Methods Section
-              Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Text(
-                  'Payment Methods',
-                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                    fontWeight: FontWeight.bold,
-                    color: Colors.black87,
-                  ),
-                ),
-              ),
-
-              // Payment Methods Grid
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: GridView.builder(
-                  shrinkWrap: true,
-                  physics: const NeverScrollableScrollPhysics(),
-                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 2,
-                    childAspectRatio: 1.5,
-                    crossAxisSpacing: 12,
-                    mainAxisSpacing: 12,
-                  ),
-                  itemCount: _balances.length,
-                  itemBuilder: (context, index) {
-                    String methodName = _balances.keys.elementAt(index);
-                    double balance = _balances[methodName] ?? 0.0;
-                    Color methodColor = _getColorForMethod(methodName);
-                    
-                    return Card(
-                      elevation: 4,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(15),
-                      ),
-                      child: Container(
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(15),
-                          gradient: LinearGradient(
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                            colors: [
-                              methodColor.withOpacity(0.1),
-                              methodColor.withOpacity(0.05),
-                            ],
-                          ),
-                        ),
-                        padding: const EdgeInsets.all(16.0),
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(
-                              _getIconForMethod(methodName),
-                              color: methodColor,
-                              size: 28,
-                            ),
-                            const SizedBox(height: 8),
-                            Text(
-                              methodName,
-                              style: const TextStyle(
-                                fontWeight: FontWeight.bold,
-                                color: Colors.black87,
-                              ),
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              '₹${currencyFormat.format(balance)}',
-                              style: TextStyle(
-                                color: methodColor,
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    );
-                  },
-                ),
-              ),
-
-              // Quick Actions
-              const SizedBox(height: 24),
-              Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: _buildActionButton(
-                        context: context,
-                        icon: Icons.account_balance_wallet,
-                        label: 'Transactions',
-                        gradient: const LinearGradient(
-                          colors: [Color(0xFF1976D2), Color(0xFF2196F3)],
-                        ),
-                        onPressed: () {
-                          Navigator.pushNamed(context, '/transactions')
-                              .then((_) => _loadBalances());
-                        },
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: _buildActionButton(
-                        context: context,
-                        icon: Icons.money,
-                        label: 'Loans',
-                        gradient: const LinearGradient(
-                          colors: [Color(0xFF7B1FA2), Color(0xFF9C27B0)],
-                        ),
-                        onPressed: () {
-                          Navigator.pushNamed(context, '/loans')
-                              .then((_) => _loadBalances());
-                        },
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 16),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildQuickAction({
-    required IconData icon,
-    required String label,
-    required Color color,
-    required VoidCallback onTap,
-  }) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Column(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.1),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Icon(icon, color: color, size: 28),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            label,
-            style: const TextStyle(
-              color: Colors.white70,
-              fontSize: 12,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildActionButton({
-    required BuildContext context,
-    required IconData icon,
-    required String label,
-    required Gradient gradient,
-    required VoidCallback onPressed,
-  }) {
-    return Container(
-      height: 50,
-      decoration: BoxDecoration(
-        gradient: gradient,
-        borderRadius: BorderRadius.circular(25),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.grey.withOpacity(0.3),
-            spreadRadius: 1,
-            blurRadius: 4,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: ElevatedButton.icon(
-        onPressed: onPressed,
-        style: ElevatedButton.styleFrom(
-          backgroundColor: Colors.transparent,
-          foregroundColor: Colors.white,
-          elevation: 0,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(25),
-          ),
-        ),
-        icon: Icon(icon),
-        label: Text(
-          label,
-          style: const TextStyle(
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-      ),
-    );
   }
 }
